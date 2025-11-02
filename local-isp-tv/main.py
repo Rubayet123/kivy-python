@@ -18,10 +18,8 @@ import re
 import time
 import threading
 from pathlib import Path
-from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 
-# === Android Imports ===
 if platform == 'android':
     from jnius import autoclass
     PythonActivity = autoclass('org.kivy.android.PythonActivity')
@@ -96,7 +94,7 @@ KV = '''
 
         MDLabel:
             id: title
-            text: "RedForce TV"
+            text: "Local ISP TV"
             font_style: "H4"
             size_hint_y: None
             height: dp(100)
@@ -239,7 +237,7 @@ class MainScreen(Screen):
 
     def acquire_wake_lock(self):
         if platform == 'android' and not hasattr(self, 'wake_lock'):
-            self.wake_lock = activity.getSystemService(PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "RedForce")
+            self.wake_lock = activity.getSystemService(PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LocalISP")
             self.wake_lock.acquire()
 
     def release_wake_lock(self):
@@ -254,23 +252,12 @@ GITHUB_TOKEN = GITHUB_REPO = GITHUB_PATH = GITHUB_BRANCH = ""
 AUTO_REFRESH_HOURS = 2.0
 MAX_WORKERS = 15
 
-def get_page(s): return BeautifulSoup(s.get(BASE_URL, headers=HEADERS, timeout=20).text, "lxml")
-def extract_channels(soup): 
-    return [(i.find("img").get("alt","").strip(), [c for c in li.get("class",[]) if c!="All"], re.search(r"stream=(\d+)", a.get("onclick","")).group(1), urljoin(BASE_URL, i.find("img").get("src",""))) 
-            for li in soup.select("ul#vidlink li") if (a:=li.find("a", {"onclick":True}) and (i:=a.find("img")))]
-def resolve_url(sid):
-    try:
-        r = requests.get(urljoin(BASE_URL, f"player.php?stream={sid}"), headers=HEADERS, timeout=20)
-        for pat in [r'<iframe[^>]+src=["\']([^"\']*\.m3u8[^"\']*)["\']', r'<source[^>]+src=["\']([^"\']*\.m3u8[^"\']*)["\']', r'(https?://[^\s\'"]*\.m3u8[^\s\'"]*)']:
-            if (m:=re.search(pat, r.text, re.I)): return urljoin(r.url, m.group(1).strip())
-        return r.url if ".m3u8" in r.url else None
-    except: return None
-
 def scrape_and_save():
     s = requests.Session()
     s.headers.update(HEADERS)
-    soup = get_page(s)
-    raw = extract_channels(soup)
+    soup = BeautifulSoup(s.get(BASE_URL, headers=HEADERS, timeout=20).text, "lxml")
+    raw = [(i.find("img").get("alt","").strip(), [c for c in li.get("class",[]) if c!="All"], re.search(r"stream=(\d+)", a.get("onclick","")).group(1), urljoin(BASE_URL, i.find("img").get("src",""))) 
+           for li in soup.select("ul#vidlink li") if (a:=li.find("a", {"onclick":True}) and (i:=a.find("img")))]
     ids = [sid for _, _, sid, _ in raw]
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         urls = dict(ex.map(lambda sid: (sid, resolve_url(sid)), ids))
@@ -280,6 +267,14 @@ def scrape_and_save():
         M3U_FILE.write_text("\n".join(["#EXTM3U"] + [f'#EXTINF:-1 tvg-name="{n.replace('"',"'")}" tvg-logo="{l}" group-title="{c[0] if c else ""}",{n.replace('"',"'")}\n{u}' for n,c,_,l,u in resolved]), encoding="utf-8")
     return len(raw), len(resolved)
 
+def resolve_url(sid):
+    try:
+        r = requests.get(urljoin(BASE_URL, f"player.php?stream={sid}"), headers=HEADERS, timeout=20)
+        for pat in [r'<iframe[^>]+src=["\']([^"\']*\.m3u8[^"\']*)["\']', r'<source[^>]+src=["\']([^"\']*\.m3u8[^"\']*)["\']', r'(https?://[^\s\'"]*\.m3u8[^\s\'"]*)']:
+            if (m:=re.search(pat, r.text, re.I)): return urljoin(r.url, m.group(1).strip())
+        return r.url if ".m3u8" in r.url else None
+    except: return None
+
 def upload_to_github():
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_PATH}"
     h = {"Authorization": f"token {GITHUB_TOKEN}"}
@@ -288,8 +283,9 @@ def upload_to_github():
     if sha: data["sha"] = sha
     return requests.put(url, headers=h, json=data).ok
 
-class RedForceApp(MDApp):
+class LocalISPTVApp(MDApp):
     def build(self):
+        self.title = "Local ISP TV"
         self.theme_cls.theme_style = "Dark"
         self.theme_cls.primary_palette = "Blue"
         self.store = JsonStore('config.json')
@@ -343,4 +339,4 @@ class RedForceApp(MDApp):
         self.start_auto_refresh()
 
 if __name__ == '__main__':
-    RedForceApp().run()
+    LocalISPTVApp().run()
